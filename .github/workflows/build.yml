@@ -13,43 +13,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Get latest version
+        id: version
+        run: |
+          LATEST_APP=$(wget -qO- https://api.github.com/repos/usememos/memos/tags | gawk -F '["v]' '/name/{print "v"$5;exit}')
+          echo "version=${LATEST_APP}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version: '1.27'
           check-latest: true
+          cache: true
+          cache-dependency-path: memos/go.sum
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.1
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: memos/web/pnpm-lock.yaml
 
       - name: Clone Repo
-        run: |
-          export LATEST_APP=$(wget -qO- https://api.github.com/repos/usememos/memos/tags | gawk -F '["v]' '/name/{print "v"$5;exit}')
-          git clone -b $LATEST_APP https://github.com/usememos/memos
-          npm install -g pnpm
+        run: git clone -b ${{ steps.version.outputs.version }} https://github.com/usememos/memos
 
       - name: Build Frontend
+        working-directory: memos/web
         run: |
-          cd memos/web
-          pnpm i --frozen-lockfile
-          pnpm build
-          mkdir -p ../artifact
-          rm -rf ../server/router/frontend/dist
-          mkdir -p ../server/router/frontend
-          cp -R dist ../server/router/frontend/dist
-          cd ../..
+          pnpm install --frozen-lockfile
+          pnpm release
 
       - name: Build binary
+        working-directory: memos
+        env:
+          GOOS: freebsd
+          GOARCH: amd64
+          CGO_ENABLED: "0"
         run: |
-          cd memos
-          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o memos ./cmd/memos/main.go
-          rm -f artifact/*
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/usememos/memos/internal/version.Version=${{ steps.version.outputs.version }}" \
+            -tags netgo,osusergo \
+            -o memos ./cmd/memos
+
+      - name: Package binary
+        working-directory: memos
+        run: |
+          mkdir -p artifact
           cp memos artifact/memos
-          cd artifact
-          tar -czvf ../memos-freebsd-amd64.tar.gz *
-          cd ../..
+          tar -czvf memos-freebsd-amd64.tar.gz -C artifact memos
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -58,14 +74,10 @@ jobs:
           path: |
             memos/memos-freebsd-amd64.tar.gz
 
-      - name: Generate release tag
-        id: tag
-        run: echo "release_tag=$(wget -qO- https://api.github.com/repos/usememos/memos/tags | gawk -F '["v]' '/name/{print "v"$5;exit}')" >> $GITHUB_OUTPUT
-
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.release_tag }}
+          tag_name: ${{ steps.version.outputs.version }}
           files: |
             memos/memos-freebsd-amd64.tar.gz
           token: ${{ secrets.GITHUB_TOKEN }}
