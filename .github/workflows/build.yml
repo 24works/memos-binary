@@ -19,6 +19,9 @@ jobs:
           LATEST_APP=$(wget -qO- https://api.github.com/repos/usememos/memos/tags | gawk -F '["v]' '/name/{print "v"$5;exit}')
           echo "version=${LATEST_APP}" >> "$GITHUB_OUTPUT"
 
+      - name: Clone Repo
+        run: git clone -b ${{ steps.version.outputs.version }} https://github.com/usememos/memos
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -38,9 +41,6 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: memos/web/pnpm-lock.yaml
-
-      - name: Clone Repo
-        run: git clone -b ${{ steps.version.outputs.version }} https://github.com/usememos/memos
 
       - name: Build Frontend
         working-directory: memos/web
